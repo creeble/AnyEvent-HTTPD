@@ -1,5 +1,4 @@
 package AnyEvent::HTTPD::Request;
-use feature ':5.10';
 use strict;
 no warnings;
 
@@ -85,7 +84,7 @@ This method will send a response to the request.
 If no C<$res> argument was given eventually accumulated output will be
 send as C<text/html>.
 
-Otherweis C<$res> can be:
+Otherwise C<$res> can be:
 
 =over 4
 
@@ -112,7 +111,7 @@ value being the content type and the second the content.
 Here is an example:
 
    $httpd->reg_cb (
-      _image_elmex => sub {
+      '/image/elmex' => sub {
          my ($httpd, $req) = @_;
 
          open IMG, "$ENV{HOME}/media/images/elmex.png"
@@ -170,7 +169,7 @@ see also the C<url> method above.
 sub link {
    my ($self, $lbl, $cb, $newurl) = @_;
    my $id = $self->{httpd}->alloc_id ($cb);
-   $newurl //= $self->url;
+   unless (defined $newurl) { $newurl = $self->url; }
    '<a href="'.$newurl.'?_afid='.$id.'">'.$lbl.'</a>';
 }
 

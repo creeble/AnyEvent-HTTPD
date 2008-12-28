@@ -1,12 +1,12 @@
 package AnyEvent::HTTPD::HTTPConnection;
-use feature ':5.10';
+use IO::Handle;
 use HTTP::Date;
+use AnyEvent::Handle;
+use Object::Event;
 use strict;
 no warnings;
 
-use AnyEvent::HTTPD::TCPConnection;
-
-our @ISA = qw/AnyEvent::HTTPD::TCPConnection/;
+our @ISA = qw/Object::Event/;
 
 =head1 NAME
 
@@ -35,16 +35,24 @@ sub new {
    my $self  = { @_ };
    bless $self, $class;
 
-   $self->reg_cb (
-      data => sub { my ($self) = @_; $self->handle_data ($_[1]); },
-      disconnect => sub {
-         my ($self) = @_;
-         # TODO: this is not tested yet:
-         if ($self->{last_header}) {
-            $self->handle_request (@{delete $self->{last_header}}, $self->read_buffer);
+   $self->{hdl} =
+      AnyEvent::Handle->new (
+         fh => $self->{fh},
+         on_eof => sub {
+            $self->event ('disconnect');
+            delete $self->{handles}->{$_[0]}
+         },
+         on_error => sub {
+            $self->event ('disconnect', "Error: $!");
+            delete $self->{handles}->{$_[0]}
+         },
+         on_read => sub {
+            $self->{rbuf} .= $_[0]->rbuf;
+            $_[0]->rbuf = '';
+            $self->handle_data (\$self->{rbuf});
+            1
          }
-      }
-   );
+      );
 
    return $self
 }
@@ -54,7 +62,7 @@ sub error {
    my ($self, $code, $msg, $hdr, $content) = @_;
 
    if ($code !~ /^(1\d\d|204|304)$/) {
-      $content //= "$code $msg";
+      unless (defined $content) { $content = "$code $msg" }
       $hdr->{'Content-Type'} = 'text/plain';
    }
 
@@ -63,52 +71,18 @@ sub error {
 
 sub response {
    my ($self, $code, $msg, $hdr, $content) = @_;
-   my $res = "HTTP/1.1 $code $msg\015\012";
+   my $res = "HTTP/1.0 $code $msg\015\012";
    $hdr->{'Expires'} = $hdr->{'Date'} = time2str time;
    $hdr->{'Cache-Control'} = "max-age=0";
-
-   if ($hdr->{'Transfer-Encoding'} eq 'chunked') {
-      $self->{chunked} = 1;
-   }
-
-   if ($self->{chunked}) {
-      $hdr->{'Transfer-Encoding'} = 'chunked';
-   } else {
-      $hdr->{'Content-Length'} = length $content;
-   }
+   $hdr->{'Content-Length'} = length $content;
 
    while (my ($h, $v) = each %$hdr) {
       $res .= "$h: $v\015\012";
    }
    $res .= "\015\012";
-
-   if (!$self->{chunked}) {
-      $res .= $content;
-   }
-   $self->write_data ($res);
-
-   if ($self->{chunked}) {
-      $self->chunk ($content);
-   }
-}
-
-sub chunk {
-   my ($self, $chunk, $exts, $is_last) = @_;
-
-   my $len = sprintf "%x", length $chunk;
-   my $chunkdat = $len;
-   if (defined $exts) {
-      for (keys %$exts) {
-         $chunkdat .= ";" . $_ . (defined $exts->{$_} ? "=$exts->{$_}" : "");
-      }
-   }
-   my $chunked_body = $chunkdat . "\015\012" . $chunk . "\015\012";
-   $self->write_data ($chunked_body);
-
-   if ($is_last) {
-      $self->write_data ("0\015\012\015\012");
-      $self->{chunked} = 0;
-   }
+   $res .= $content;
+   $self->{hdl}->push_write ($res);
+   $self->{hdl}->on_drain (sub { $self->do_disconnect; });
 }
 
 sub _unquote {
@@ -129,12 +103,12 @@ sub _parse_headers {
    my $hdr;
 
    while ($header =~ /\G
-      (?<header>[^:\000-\040]+) : [\011\040]* 
-         (?<cont> (?:[^\015\012]+|\015\012[\011\040])* )
+      ([^:\000-\040]+) : [\011\040]* 
+         ((?:[^\015\012]+|\015\012[\011\040])* )
          \015\012
       /sgx) {
 
-      $hdr->{$+{header}} .= ",$+{cont}"
+      $hdr->{$1} .= ",$2"
    }
    for (keys %$hdr) { $hdr->{$_} = substr $hdr->{$_}, 1; }
    $hdr
@@ -160,11 +134,11 @@ sub decode_multipart {
 
    while ($cont =~ s/
       ^--\Q$boundary\E              \015\012
-      (?<header> (?:[^\015\012]+\015\012)* ) \015\012
-      (?<cont>.*?) \015\012
-      (--\Q$boundary\E (?<end>--)?  \015\012)
+      ((?:[^\015\012]+\015\012)* ) \015\012
+      (.*?) \015\012
+      (--\Q$boundary\E (--)?  \015\012)
       /\3/xs) {
-      my ($h, $c, $e) = ($+{header}, $+{cont}, $+{end});
+      my ($h, $c, $e) = ($1, $2, $3);
 
       if (my (@p) = $self->decode_part ($h, $c)) {
          push @{$parts->{$p[0]}}, [$p[1], $p[2], $p[3]];
@@ -224,15 +198,11 @@ sub handle_request {
       }
    }
 
-   #d#require Data::Dumper;
-
    if ($c eq 'multipart/form-data') {
       $cont = $self->decode_multipart ($cont, $bound);
-      #d#warn "DUMP[". Data::Dumper::Dumper ([$cont]). "]\n";
 
    } elsif ($c =~ /x-www-form-urlencoded/) {
       $cont = $self->parse_urlencoded ($cont);
-      #d# warn "DUMP[". Data::Dumper::Dumper ([$cont]). "]\n";
    }
 
    $self->event (request => $method, $uri, $hdr, $cont);
@@ -240,7 +210,6 @@ sub handle_request {
 
 sub handle_data {
    my ($self, $rbuf) = @_;
-   #d# warn "BUF[$$rbuf]\n";
 
    if ($self->{content_len}) {
       if ($self->{content_len} <= length $$rbuf) {
@@ -249,27 +218,28 @@ sub handle_data {
          $self->handle_request (@{delete $self->{last_header}}, $cont);
          delete $self->{content_len};
       }
+
    } else {
       if ($$rbuf =~ s/^
-             (?<method>\S+) \040 (?<uri>\S+) \040 HTTP\/(?<ver> \d+\.\d+ ) \015\012
-             (?<headers> (?:[^\015]+\015\012)* ) \015\012//sx) {
+             (\S+) \040 (\S+) \040 HTTP\/(\d+)\.(\d+) \015\012
+             ((?:[^\015]+\015\012)* ) \015\012//sx) {
 
-         my ($m, $u, $h) = ($+{method},$+{uri},$+{headers});
+         my ($m, $u, $vm, $vi, $h) = ($1,$2,$3,$4,$5);
          my $hdr = {};
 
          if ($m ne 'GET' && $m ne 'HEAD' && $m ne 'POST') {
-            $self->error (405, "method not allowed", { Allow => "GET,HEAD" });
+            $self->error (405, "method not allowed", { Allow => "GET,HEAD,POST" });
             return;
          }
 
-         if ($+{ver} >= 2) {
+         if ($vm >= 2) {
             $self->error (506, "http protocol version not supported");
             return;
          }
 
          $hdr = _parse_headers ($h);
 
-         $self->{last_header} = [$+{method}, $+{uri}, $hdr];
+         $self->{last_header} = [$m, $u, $hdr];
 
          if (defined $hdr->{'Content-Length'}) {
             $self->{content_len} = $hdr->{'Content-Length'};
@@ -279,6 +249,12 @@ sub handle_data {
          }
       }
    }
+}
+
+sub do_disconnect {
+   my ($self, $err) = @_;
+   delete $self->{hdl};
+   $self->event ('disconnect', $err);
 }
 
 1;

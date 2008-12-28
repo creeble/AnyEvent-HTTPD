@@ -1,10 +1,14 @@
 package AnyEvent::HTTPD::HTTPServer;
-use feature ':5.10';
 use strict;
 no warnings;
 
-use AnyEvent::HTTPD::TCPListener;
+use Object::Event;
+use AnyEvent::Handle;
+use AnyEvent::Socket;
+
 use AnyEvent::HTTPD::HTTPConnection;
+
+our @ISA = qw/Object::Event/;
 
 =head1 NAME
 
@@ -26,25 +30,36 @@ under the same terms as Perl itself.
 
 =cut
 
-our @ISA = qw/AnyEvent::HTTPD::TCPListener/;
-
 sub new {
    my $this  = shift;
    my $class = ref($this) || $this;
-   my $self = $class->SUPER::new (@_);
+   my $self  = { @_ };
+   bless $self, $class;
 
-   $self->reg_cb (
-      connect => sub {
-         my ($list, $cl) = @_;
-      },
-      disconnect => sub {
-         my ($list, $cl) = @_;
+   tcp_server undef, $self->{port}, sub {
+      my ($fh) = @_;
+      unless ($fh) {
+         $self->event (error => "couldn't accept client: $!");
+         return;
       }
-   );
+      $self->accept_connection ($fh);
+   };
 
    return $self
 }
 
-sub connection_class { 'AnyEvent::HTTPD::HTTPConnection' }
+sub accept_connection {
+   my ($self, $fh) = @_;
+
+   my $htc = AnyEvent::HTTPD::HTTPConnection->new (fh => $fh);
+   $self->{handles}->{$htc} = $htc;
+
+   $htc->reg_cb (disconnect => sub {
+      delete $self->{handles}->{$_[0]};
+      $self->event (disconnect => $_[0], $_[1])
+   });
+
+   $self->event (connect => $htc);
+}
 
 1;

@@ -35,28 +35,26 @@ sub new {
    my $self  = { @_ };
    bless $self, $class;
 
+   $self->{request_timeout} = 60
+      unless defined $self->{request_timeout};
+
    $self->{hdl} =
       AnyEvent::Handle->new (
          fh => $self->{fh},
          on_eof => sub {
             $self->event ('disconnect');
-            delete $self->{handles}->{$_[0]}
+            delete $self->{hdl};
          },
          on_error => sub {
             $self->event ('disconnect', "Error: $!");
-            delete $self->{handles}->{$_[0]}
-         },
-         on_read => sub {
-            $self->{rbuf} .= $_[0]->rbuf;
-            $_[0]->rbuf = '';
-            $self->handle_data (\$self->{rbuf});
-            1
+            delete $self->{hdl};
          }
       );
 
+   $self->push_header_line;
+
    return $self
 }
-
 
 sub error {
    my ($self, $code, $msg, $hdr, $content) = @_;
@@ -72,17 +70,27 @@ sub error {
 sub response {
    my ($self, $code, $msg, $hdr, $content) = @_;
    my $res = "HTTP/1.0 $code $msg\015\012";
-   $hdr->{'Expires'} = $hdr->{'Date'} = time2str time;
-   $hdr->{'Cache-Control'} = "max-age=0";
+   $hdr->{'Expires'}        = $hdr->{'Date'}
+                            = time2str time;
+   $hdr->{'Cache-Control'}  = "max-age=0";
    $hdr->{'Content-Length'} = length $content;
+   $hdr->{'Connection'}     = $self->{keep_alive} ? 'Keep-Alive' : 'close';
 
    while (my ($h, $v) = each %$hdr) {
       $res .= "$h: $v\015\012";
    }
+
    $res .= "\015\012";
    $res .= $content;
+
    $self->{hdl}->push_write ($res);
-   $self->{hdl}->on_drain (sub { $self->do_disconnect; });
+
+   if ($self->{keep_alive}) {
+      $self->push_header_line;
+
+   } else {
+      $self->{hdl}->on_drain (sub { $self->do_disconnect });
+   }
 }
 
 sub _unquote {
@@ -98,32 +106,41 @@ sub _unquote {
    $str
 }
 
-sub _parse_headers {
-   my ($header) = @_;
-   my $hdr;
-
-   while ($header =~ /\G
-      ([^:\000-\040]+) : [\011\040]* 
-         ((?:[^\015\012]+|\015\012[\011\040])* )
-         \015\012
-      /sgx) {
-
-      $hdr->{$1} .= ",$2"
-   }
-   for (keys %$hdr) { $hdr->{$_} = substr $hdr->{$_}, 1; }
-   $hdr
-}
-
 sub decode_part {
    my ($self, $hdr, $cont) = @_;
 
    $hdr = _parse_headers ($hdr);
-   if ($hdr->{'Content-Disposition'} =~ /form-data/) {
-      my ($dat, $name_para) = split /\s*;\s*/, $hdr->{'Content-Disposition'};
-      my ($name, $par) = split /\s*=\s*/, $name_para;
-      if ($par =~ /^".*"$/) { $par = _unquote ($par) }
-      return ($par, $cont, $hdr->{'Content-Type'});
+   if ($hdr->{'content-disposition'} =~ /form-data|attachment/) {
+      my ($dat, @pars) = split /\s*;\s*/, $hdr->{'content-disposition'};
+      my @params;
+
+      my %p;
+
+      my @res;
+
+      for my $name_para (@pars) {
+         my ($name, $par) = split /\s*=\s*/, $name_para;
+         if ($par =~ /^".*"$/) { $par = _unquote ($par) }
+         $p{$name} = $par;
+      }
+
+      my ($ctype, $bound) = _content_type_boundary ($hdr->{'content-type'});
+
+      if ($ctype eq 'multipart/mixed') {
+         my $parts = $self->decode_multipart ($cont, $bound);
+         for my $sp (keys %$parts) {
+            for (@{$parts->{$sp}}) {
+               push @res, [$p{name}, @$_];
+            }
+         }
+
+      } else {
+         push @res, [$p{name}, $cont, $hdr->{'content-type'}, $p{filename}];
+      }
+
+      return @res
    }
+
    ();
 }
 
@@ -133,19 +150,22 @@ sub decode_multipart {
    my $parts = {};
 
    while ($cont =~ s/
-      ^--\Q$boundary\E              \015\012
-      ((?:[^\015\012]+\015\012)* ) \015\012
-      (.*?) \015\012
-      (--\Q$boundary\E (--)?  \015\012)
+      ^--\Q$boundary\E             \015?\012
+      ((?:[^\015\012]+\015\012)* ) \015?\012
+      (.*?)                        \015?\012
+      (--\Q$boundary\E (--)?       \015?\012)
       /\3/xs) {
-      my ($h, $c, $e) = ($1, $2, $3);
+      my ($h, $c, $e) = ($1, $2, $4);
 
       if (my (@p) = $self->decode_part ($h, $c)) {
-         push @{$parts->{$p[0]}}, [$p[1], $p[2], $p[3]];
+         for my $part (@p) {
+            push @{$parts->{$part->[0]}}, [$part->[1], $part->[2], $part->[3]];
+         }
       }
 
       last if $e eq '--';
    }
+
    return $parts;
 }
 
@@ -167,13 +187,13 @@ sub decode_multipart {
 
 sub _url_unescape {
    my ($val) = @_;
-   $val =~ s/\+/ /g;
-   $val =~ s/%([0-9a-f][0-9a-f])/chr (hex ($1))/eg;
+   $val =~ s/\+/\040/g;
+   $val =~ s/%([0-9a-fA-F][0-9a-fA-F])/chr (hex ($1))/eg;
    $val
 }
 
-sub parse_urlencoded {
-   my ($self, $cont) = @_;
+sub _parse_urlencoded {
+   my ($cont) = @_;
    my (@pars) = split /\&/, $cont;
    $cont = {};
 
@@ -187,48 +207,109 @@ sub parse_urlencoded {
    $cont
 }
 
-sub handle_request {
-   my ($self, $method, $uri, $hdr, $cont) = @_;
-
-   my ($c, @params) = split /\s*;\s*/, $hdr->{'Content-Type'};
+sub _content_type_boundary {
+   my ($ctype) = @_;
+   my ($c, @params) = split /\s*[;,]\s*/, $ctype;
    my $bound;
    for (@params) {
       if (/^\s*boundary\s*=\s*(.*?)\s*$/) {
          $bound = _unquote ($1);
       }
    }
+   ($c, $bound)
+}
 
-   if ($c eq 'multipart/form-data') {
+sub handle_request {
+   my ($self, $method, $uri, $hdr, $cont) = @_;
+
+   $self->{keep_alive} = ($hdr->{connection} =~ /keep-alive/i);
+
+   my ($ctype, $bound) = _content_type_boundary ($hdr->{'content-type'});
+
+   if ($ctype eq 'multipart/form-data') {
       $cont = $self->decode_multipart ($cont, $bound);
 
-   } elsif ($c =~ /x-www-form-urlencoded/) {
-      $cont = $self->parse_urlencoded ($cont);
+   } elsif ($ctype =~ /x-www-form-urlencoded/) {
+      $cont = _parse_urlencoded ($cont);
    }
 
    $self->event (request => $method, $uri, $hdr, $cont);
 }
 
-sub handle_data {
-   my ($self, $rbuf) = @_;
+# loosely adopted from AnyEvent::HTTP:
+sub _parse_headers {
+   my ($header) = @_;
+   my $hdr;
 
-   if ($self->{content_len}) {
-      if ($self->{content_len} <= length $$rbuf) {
-         my $cont = substr $$rbuf, 0, $self->{content_len};
-         $$rbuf = substr $$rbuf, $self->{content_len};
-         $self->handle_request (@{delete $self->{last_header}}, $cont);
-         delete $self->{content_len};
+   $header =~ y/\015//d;
+
+   while ($header =~ /\G
+      ([^:\000-\037]+):
+      [\011\040]*
+      ( (?: [^\012]+ | \012 [\011\040] )* )
+      \012
+   /sgcx) {
+
+      $hdr->{lc $1} .= ",$2"
+   }
+
+   return undef unless $header =~ /\G$/sgx;
+
+   for (keys %$hdr) {
+      substr $hdr->{$_}, 0, 1, '';
+      # remove folding:
+      $hdr->{$_} =~ s/\012([\011\040])/$1/sg;
+   }
+
+   $hdr
+}
+
+sub push_header {
+   my ($self, $hdl) = @_;
+
+   $self->{hdl}->unshift_read (regex =>
+      qr<\015?\012\015?\012>, undef, qr<^.*[^\015\012]>,
+      sub {
+         my ($hdl, $data) = @_;
+         $data =~ s/\015?\012$//s;
+         my $hdr = _parse_headers ($data);
+
+         unless (defined $hdr) {
+            $self->error (599 => "garbled headers");
+         }
+
+         push @{$self->{last_header}}, $hdr;
+
+         if (defined $hdr->{'content-length'}) {
+            $self->{hdl}->unshift_read (chunk => $hdr->{'content-length'}, sub {
+               my ($hdl, $data) = @_;
+               $self->handle_request (@{$self->{last_header}}, $data);
+            });
+         } else {
+            $self->handle_request (@{$self->{last_header}});
+         }
       }
+   );
+}
 
-   } else {
-      if ($$rbuf =~ s/^
-             (\S+) \040 (\S+) \040 HTTP\/(\d+)\.(\d+) \015\012
-             ((?:[^\015]+\015\012)* ) \015\012//sx) {
+sub push_header_line {
+   my ($self) = @_;
 
-         my ($m, $u, $vm, $vi, $h) = ($1,$2,$3,$4,$5);
-         my $hdr = {};
+   $self->{req_timeout} =
+      AnyEvent->timer (after => $self->{request_timeout}, cb => sub {
+         $self->do_disconnect ("request timeout ($self->{request_timeout})");
+      });
 
-         if ($m ne 'GET' && $m ne 'HEAD' && $m ne 'POST') {
-            $self->error (405, "method not allowed", { Allow => "GET,HEAD,POST" });
+   $self->{hdl}->push_read (line => sub {
+      my ($hdl, $line) = @_;
+      delete $self->{req_timeout};
+
+      if ($line =~ /(\S+) \040 (\S+) \040 HTTP\/(\d+)\.(\d+)/xs) {
+         my ($meth, $url, $vm, $vi) = ($1, $2, $3, $4);
+
+         if (not grep { $meth eq $_ } qw/GET HEAD POST/) {
+            $self->error (405, "method not allowed",
+                          { Allow => "GET,HEAD,POST" });
             return;
          }
 
@@ -237,24 +318,26 @@ sub handle_data {
             return;
          }
 
-         $hdr = _parse_headers ($h);
+         $self->{last_header} = [$meth, $url];
+         $self->push_header;
 
-         $self->{last_header} = [$m, $u, $hdr];
+      } elsif ($line eq '') {
+         # ignore empty lines before requests, this prevents
+         # browser bugs w.r.t. keep-alive (according to marc lehmann).
+         $self->push_header_line;
 
-         if (defined $hdr->{'Content-Length'}) {
-            $self->{content_len} = $hdr->{'Content-Length'};
-            $self->handle_data ($rbuf);
-         } else {
-            $self->handle_request (@{$self->{last_header}});
-         }
+      } else {
+         $self->error (400 => 'bad request');
       }
-   }
+   });
 }
 
 sub do_disconnect {
    my ($self, $err) = @_;
-   delete $self->{hdl};
+
+   delete $self->{req_timeout};
    $self->event ('disconnect', $err);
+   delete $self->{hdl};
 }
 
 1;

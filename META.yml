@@ -1,21 +1,27 @@
 --- #YAML:1.0
-name:                AnyEvent-HTTPD
-version:             0.04
-abstract:            A simple lightweight event based web (application) server
-license:             perl
-author:              
+name:               AnyEvent-HTTPD
+version:            0.5
+abstract:           A simple lightweight event based web (application) server
+author:
     - Robin Redeker <elmex@ta-sa.org>
-generated_by:        ExtUtils::MakeMaker version 6.42
-distribution_type:   module
-requires:     
-    AnyEvent:                      0
-    CGI:                           0
-    Fcntl:                         0
-    HTTP::Date:                    0
-    Object::Event:                 0
-    POSIX:                         0
-    Test::More:                    0
-    URI:                           0
+license:            perl
+distribution_type:  module
+configure_requires:
+    ExtUtils::MakeMaker:  0
+requires:
+    AnyEvent:       0
+    CGI:            0
+    Fcntl:          0
+    HTTP::Date:     0
+    Object::Event:  0
+    POSIX:          0
+    Test::More:     0
+    URI:            0
+no_index:
+    directory:
+        - t
+        - inc
+generated_by:       ExtUtils::MakeMaker version 6.46
 meta-spec:
-    url:     http://module-build.sourceforge.net/META-spec-v1.3.html
-    version: 1.3
+    url:      http://module-build.sourceforge.net/META-spec-v1.4.html
+    version:  1.4

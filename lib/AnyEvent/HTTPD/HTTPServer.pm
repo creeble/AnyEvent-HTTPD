@@ -36,7 +36,7 @@ sub new {
    my $self  = { @_ };
    bless $self, $class;
 
-   tcp_server undef, $self->{port}, sub {
+   tcp_server $self->{host}, $self->{port}, sub {
       my ($fh) = @_;
       unless ($fh) {
          $self->event (error => "couldn't accept client: $!");
@@ -51,7 +51,11 @@ sub new {
 sub accept_connection {
    my ($self, $fh) = @_;
 
-   my $htc = AnyEvent::HTTPD::HTTPConnection->new (fh => $fh);
+   my $htc =
+      AnyEvent::HTTPD::HTTPConnection->new (
+         fh => $fh,
+         request_timeout => $self->{request_timeout});
+
    $self->{handles}->{$htc} = $htc;
 
    $htc->reg_cb (disconnect => sub {

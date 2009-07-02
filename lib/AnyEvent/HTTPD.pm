@@ -4,10 +4,9 @@ no warnings;
 
 use Scalar::Util qw/weaken/;
 use URI;
-use AnyEvent::HTTPD::HTTPServer;
 use AnyEvent::HTTPD::Request;
 
-our @ISA = qw/AnyEvent::HTTPD::HTTPServer/;
+use base qw/AnyEvent::HTTPD::HTTPServer/;
 
 =head1 NAME
 
@@ -15,11 +14,11 @@ AnyEvent::HTTPD - A simple lightweight event based web (application) server
 
 =head1 VERSION
 
-Version 0.04
+Version 0.5
 
 =cut
 
-our $VERSION = '0.04';
+our $VERSION = '0.5';
 
 =head1 SYNOPSIS
 
@@ -31,18 +30,20 @@ our $VERSION = '0.04';
        '/' => sub {
           my ($httpd, $req) = @_;
 
-          $req->o ("<html><body><h1>Hello World!</h1>");
-          $req->o ("<a href=\"/test\">another test page</a>");
-          $req->o ("</body></html>");
-          $req->respond;
+          $req->respond ({ content => ['text/html',
+             "<html><body><h1>Hello World!</h1>"
+             . "<a href=\"/test\">another test page</a>"
+             . "</body></html>"
+          ]});
        },
        '/test' => sub {
           my ($httpd, $req) = @_;
 
-          $req->o ("<html><body><h1>Test page</h1>");
-          $req->o ("<a href=\"/\">Back to the main page</a>");
-          $req->o ("</body></html>");
-          $req->respond;
+          $req->respond ({ content => ['text/html',
+             "<html><body><h1>Test page</h1>"
+             . "<a href=\"/\">Back to the main page</a>"
+             . "</body></html>"
+          ]});
        },
     );
 
@@ -55,34 +56,33 @@ interfaces. It's completly event based and independend from any event loop
 by using the L<AnyEvent> module.
 
 It's HTTP implementation is a bit hacky, so before using this module make sure
-it works for you and the expected deployment. Feel free to improve the HTTP support
-and send in patches!
+it works for you and the expected deployment. Feel free to improve the HTTP
+support and send in patches!
 
-The documentation is currently only the source code, but next versions of
-this module will be better documented hopefully. See also the C<samples/> directory
+The documentation is currently only the source code, but next versions of this
+module will be better documented hopefully. See also the C<samples/> directory
 in the L<AnyEvent::HTTPD> distribution for basic starting points.
-
-L<AnyEvent::HTTPD> even comes with some basic AJAX framework/helper.
 
 =head1 FEATURES
 
 =over 4
 
-=item * support for GET and POST requests
+=item * support for GET and POST requests.
 
-=item * processing of C<x-www-form-urlencoded> and C<multipart/form-data> encoded form parameters
+=item * support for HTTP 1.0 keep-alive.
 
-=item * ajax helper and javascript output functions in L<AnyEvent::HTTPD::Appgets>
+=item * processing of C<x-www-form-urlencoded> and C<multipart/form-data> (C<multipart/mixed>) encoded form parameters.
 
 =back
 
 =head1 METHODS
 
-The L<AnyEvent::HTTPD> class inherits directly from L<AnyEvent::HTTPD::HTTPServer>
-which inherits the event callback interface from L<Object::Event>.
+The L<AnyEvent::HTTPD> class inherits directly from
+L<AnyEvent::HTTPD::HTTPServer> which inherits the event callback interface from
+L<Object::Event>.
 
-Event callbacks can be registered via the L<Object::Event> API (see the documentation
-of L<Object::Event> for details).
+Event callbacks can be registered via the L<Object::Event> API (see the
+documentation of L<Object::Event> for details).
 
 For a list of available events see below in the I<EVENTS> section.
 
@@ -95,9 +95,19 @@ The C<%args> hash may contain one of these key/value pairs:
 
 =over 4
 
+=item host => $host
+
+The TCP address of the HTTP server will listen on. Usually 0.0.0.0 (the
+default), for a public server, or 127.0.0.1 for a local server.
+
 =item port => $port
 
 The TCP port the HTTP server will listen on.
+
+=item request_timeout => $seconds
+
+This will set the request timeout for connections.
+The default value is 60 seconds.
 
 =back
 
@@ -107,8 +117,6 @@ sub new {
    my $this  = shift;
    my $class = ref($this) || $this;
    my $self  = $class->SUPER::new (@_);
-
-   $self->start_cleanup;
 
    $self->reg_cb (
       connect => sub {
@@ -122,13 +130,15 @@ sub new {
                $url = URI->new ($url);
 
                if ($meth eq 'GET') {
-                  $cont = $con->parse_urlencoded ($url->query);
+                  $cont =
+                     AnyEvent::HTTPD::HTTPConnection::_parse_urlencoded ($url->query);
                }
 
                if ($meth eq 'GET' or $meth eq 'POST') {
 
                   weaken $con;
-                  $self->handle_app_req ($url, $hdr, $cont, sub {
+
+                  $self->handle_app_req ($meth, $url, $hdr, $cont, sub {
                      $con->response (@_) if $con;
                   });
                } else {
@@ -143,56 +153,18 @@ sub new {
       }
    );
 
-   $self->{max_data} 
-      = defined $self->{max_data} ? $self->{max_data} : 10;
-   $self->{cleanup_interval}
-      = defined $self->{cleanup_interval} ? $self->{cleanup_interval} : 60;
    $self->{state} ||= {};
 
    return $self
 }
 
-sub start_cleanup {
-   my ($self) = @_;
-   $self->{clean_tmr} =
-      AnyEvent->timer (after => $self->{cleanup_interval}, cb => sub {
-         $self->cleanup;
-         $self->start_cleanup;
-      });
-}
-
-sub cleanup {
-   my ($self) = @_;
-
-   my $cnt = scalar @{$self->{form_ages} || []};
-
-   if ($cnt > $self->{max_data}) {
-      my $diff = $cnt - $self->{max_data};
-
-      while ($cnt-- > 0) {
-         my $d = pop @{$self->{form_ages} || []};
-         last unless defined $d;
-         delete $self->{form_cbs}->{$d->[1]};
-      }
-   }
-}
-
-sub alloc_id {
-   my ($self, $dest, @args) = @_;
-   $self->{form_id}++;
-   $self->{form_cbs}->{"$self->{form_id}"} = [$dest, \@args];
-   push @{$self->{form_ages}}, [time, $self->{form_id}];
-   $self->{form_id}
-}
-
 sub handle_app_req {
-   my ($self, $url, $hdr, $cont, $respcb) = @_;
-
-   weaken $self;
+   my ($self, $meth, $url, $hdr, $cont, $respcb) = @_;
 
    my $req =
       AnyEvent::HTTPD::Request->new (
          httpd   => $self,
+         method  => $meth,
          url     => $url,
          hdr     => $hdr,
          parm    => (ref $cont ? $cont : {}),
@@ -200,16 +172,9 @@ sub handle_app_req {
          resp    => $respcb
       );
 
-   if ($req->is_form_submit) {
-      my $id = $req->form_id;
-      my $cb = $self->{form_cbs}->{"$id"};
-
-      if (ref $cb->[0] eq 'CODE') {
-         $cb->[0]->($req);
-      }
-   }
-
-   $self->event ('request' => $req);
+   $self->{req_stop} = 0;
+   $self->event (request => $req);
+   return if $self->{req_stop};
 
    my @evs;
    my $cururl = '';
@@ -219,7 +184,6 @@ sub handle_app_req {
       $cururl .= '/';
    }
 
-   $self->{req_stop} = 0;
    for my $ev (reverse @evs) {
       $self->event ($ev => $req);
       last if $self->{req_stop};
@@ -229,7 +193,10 @@ sub handle_app_req {
 =item B<stop_request>
 
 When the server walks the request URI path upwards you can stop
-the walk by calling this method. Example:
+the walk by calling this method. You can even stop further handling
+after the C<request> event.
+
+Example:
 
    $httpd->reg_cb (
       '/test' => sub {
@@ -307,13 +274,13 @@ Here is an example how to register an event for the example URL above:
 
 See also C<stop_request> about stopping the walk of the path segments.
 
-The first argument to such a callback is always the L<AnyEvent::HTTPD> object itself.
-The second argument (C<$req>) is the L<AnyEvent::HTTPD::Request> object for this
-request. It can be used to get the (possible) form parameters for this
-request or the transmitted content and respond to the request.
+The first argument to such a callback is always the L<AnyEvent::HTTPD> object
+itself.  The second argument (C<$req>) is the L<AnyEvent::HTTPD::Request>
+object for this request. It can be used to get the (possible) form parameters
+for this request or the transmitted content and respond to the request.
 
-Also every request also emits the C<request> event, with the same arguments and semantics,
-you can use this to implement your own request multiplexing.
+Also every request also emits the C<request> event, with the same arguments and
+semantics, you can use this to implement your own request multiplexing.
 
 =head1 CACHING
 
@@ -329,9 +296,11 @@ Robin Redeker, C<< <elmex at ta-sa.org> >>
 
 =head1 BUGS
 
-Please report any bugs or feature requests to C<bug-bs-httpd at rt.cpan.org>, or through
-the web interface at L<http://rt.cpan.org/NoAuth/ReportBug.html?Queue=AnyEvent-HTTPD>.  I will be notified, and then you'll
-automatically be notified of progress on your bug as I make changes.
+Please report any bugs or feature requests to C<bug-bs-httpd at rt.cpan.org>,
+or through the web interface at
+L<http://rt.cpan.org/NoAuth/ReportBug.html?Queue=AnyEvent-HTTPD>.  I will be
+notified, and then you'll automatically be notified of progress on your bug as
+I make changes.
 
 =head1 SUPPORT
 
@@ -343,6 +312,10 @@ You can find documentation for this module with the perldoc command.
 You can also look for information at:
 
 =over 4
+
+=item * Git repository
+
+L<http://git.ta-sa.org/AnyEvent-HTTPD.git>
 
 =item * RT: CPAN's request tracker
 
@@ -362,9 +335,10 @@ L<http://search.cpan.org/dist/AnyEvent-HTTPD>
 
 =back
 
-
 =head1 ACKNOWLEDGEMENTS
 
+   Andrey Smirnov - for keep-alive patches.
+   Pedro Melo     - for valuable input in general and patches.
 
 =head1 COPYRIGHT & LICENSE
 

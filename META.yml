@@ -1,6 +1,6 @@
 --- #YAML:1.0
 name:               AnyEvent-HTTPD
-version:            0.7
+version:            0.71
 abstract:           A simple lightweight event based web (application) server
 author:
     - Robin Redeker <elmex@ta-sa.org>

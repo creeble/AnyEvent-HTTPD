@@ -14,11 +14,11 @@ AnyEvent::HTTPD - A simple lightweight event based web (application) server
 
 =head1 VERSION
 
-Version 0.6
+Version 0.7
 
 =cut
 
-our $VERSION = '0.6';
+our $VERSION = '0.7';
 
 =head1 SYNOPSIS
 
@@ -73,6 +73,8 @@ in the L<AnyEvent::HTTPD> distribution for basic starting points.
 
 =item * processing of C<x-www-form-urlencoded> and C<multipart/form-data> (C<multipart/mixed>) encoded form parameters.
 
+=item * support for streaming responses.
+
 =back
 
 =head1 METHODS
@@ -102,7 +104,8 @@ default), for a public server, or 127.0.0.1 for a local server.
 
 =item port => $port
 
-The TCP port the HTTP server will listen on.
+The TCP port the HTTP server will listen on. If undefined some
+free port will be used. You can get it via the C<port> method.
 
 =item request_timeout => $seconds
 
@@ -191,6 +194,14 @@ sub handle_app_req {
       last if $self->{req_stop};
    }
 }
+
+=item B<port>
+
+Returns the port number this server is bound to.
+
+=item B<host>
+
+Returns the host/ip this server is bound to.
 
 =item B<stop_request>
 
@@ -344,7 +355,7 @@ L<http://search.cpan.org/dist/AnyEvent-HTTPD>
 
 =head1 COPYRIGHT & LICENSE
 
-Copyright 2008 Robin Redeker, all rights reserved.
+Copyright 2008-2009 Robin Redeker, all rights reserved.
 
 This program is free software; you can redistribute it and/or modify it
 under the same terms as Perl itself.

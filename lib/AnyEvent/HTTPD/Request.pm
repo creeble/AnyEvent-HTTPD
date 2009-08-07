@@ -40,11 +40,7 @@ sub url {
 
 =item B<respond ([$res])>
 
-This method will send a response to the request.
-If no C<$res> argument was given eventually accumulated output will be
-send as C<text/html>.
-
-Otherwise C<$res> can be:
+C<$res> can be:
 
 =over 4
 
@@ -83,12 +79,56 @@ Here is an example:
       }
    );
 
+B<How to send large files:>
+
+For longer responses you can give a callback instead of a string to
+the response function for the value of the C<$content>.
+
+   $req->response ({ content => ['video/x-ms-asf', sub {
+      my ($data_cb) = @_;
+
+      # start some async retrieve operation, for example use
+      # IO::AIO (with AnyEvent::AIO). Or retrieve chunks of data
+      # to send somehow else.
+
+   } });
+
+The given callback will receive as first argument either another callback
+(C<$data_cb> in the above example) or an undefined value, which means that
+there is no more data required and the transfer has been completed (either by
+you sending no more data, or by a disconnect of the client).
+
+The callback given to C<response> will be called whenever the send queue of the
+HTTP connection becomes empty (meaning that the data is written out to the
+kernel). If it is called you have to start delivering the next chunk of data.
+
+That doesn't have to be immediately, before the callback returns.  This means
+that you can initiate for instance an L<IO::AIO> request (see also
+L<AnyEvent::AIO>) and send the data later.  That is what the C<$data_cb>
+callback is for. You have to call it once you got the next chunk of data. Once
+you sent a chunk of data via C<$data_cb> you can just wait until your callback
+is called again to deliver the next chunk.
+
+If you are done transferring all data call the C<$data_cb> with an empty string
+or with no argument at all.
+
+Please consult the example script C<large_response_example> from the
+C<samples/> directory of the L<AnyEvent::HTTPD> distribution for an example of
+how to use this mechanism.
+
+B<NOTE:> You should supply a 'Content-Length' header if you are going to send a
+larger file. If you don't do that the client will have no chance to know if the
+transfer was complete. To supply additional header fields the hash argument
+format will not work. You should use the array argument format for this case.
+
 =cut
 
 sub respond {
    my ($self, $res) = @_;
 
-   my $rescb = $self->{resp};
+   return unless $self->{resp};
+
+   my $rescb = delete $self->{resp};
 
    if (ref $res eq 'HASH') {
       my $h = $res;
@@ -189,11 +229,20 @@ were transmitted.
 
 sub content { $_[0]->{content} }
 
+=item B<headers>
+
+This method will return a hash reference containing the HTTP headers for this
+HTTP request.
+
+=cut
+
+sub headers { $_[0]->{hdr} }
+
 =back
 
 =head1 COPYRIGHT & LICENSE
 
-Copyright 2008 Robin Redeker, all rights reserved.
+Copyright 2008-2009 Robin Redeker, all rights reserved.
 
 This program is free software; you can redistribute it and/or modify it
 under the same terms as Perl itself.

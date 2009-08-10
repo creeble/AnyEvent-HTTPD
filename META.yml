@@ -1,6 +1,6 @@
 --- #YAML:1.0
 name:               AnyEvent-HTTPD
-version:            0.8
+version:            0.81
 abstract:           A simple lightweight event based web (application) server
 author:
     - Robin Redeker <elmex@ta-sa.org>
@@ -10,11 +10,9 @@ configure_requires:
     ExtUtils::MakeMaker:  0
 requires:
     AnyEvent:       0
-    CGI:            0
-    Fcntl:          0
     Object::Event:  0
-    POSIX:          0
     Test::More:     0
+    Time::Local:    0
     URI:            0
 no_index:
     directory:

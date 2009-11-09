@@ -3,6 +3,7 @@ use common::sense;
 use Scalar::Util qw/weaken/;
 use URI;
 use AnyEvent::HTTPD::Request;
+use AnyEvent::HTTPD::Util;
 
 use base qw/AnyEvent::HTTPD::HTTPServer/;
 
@@ -12,11 +13,11 @@ AnyEvent::HTTPD - A simple lightweight event based web (application) server
 
 =head1 VERSION
 
-Version 0.83
+Version 0.84
 
 =cut
 
-our $VERSION = '0.83';
+our $VERSION = '0.84';
 
 =head1 SYNOPSIS
 
@@ -112,6 +113,28 @@ free port will be used. You can get it via the C<port> method.
 This will set the request timeout for connections.
 The default value is 60 seconds.
 
+=item backlog => $int
+
+The backlog argument defines the maximum length the queue of pending
+connections may grow to.  The real maximum queue length will be 1.5 times more
+than the value specified in the backlog argument.
+
+See also C<man 2 listen>.
+
+By default will be set by L<AnyEvent::Socket>C<::tcp_server> to C<128>.
+
+=item connection_class => $class
+
+This is a special parameter that you can use to pass your own connection class
+to L<AnyEvent::HTTPD::HTTPServer>.  This is only of interest to you if you plan
+to subclass L<AnyEvent::HTTPD::HTTPConnection>.
+
+=item request_class => $class
+
+This is a special parameter that you can use to pass your own request class
+to L<AnyEvent::HTTPD>.  This is only of interest to you if you plan
+to subclass L<AnyEvent::HTTPD::Request>.
+
 =back
 
 =cut
@@ -119,7 +142,10 @@ The default value is 60 seconds.
 sub new {
    my $this  = shift;
    my $class = ref($this) || $this;
-   my $self  = $class->SUPER::new (@_);
+   my $self  = $class->SUPER::new (
+      request_class => "AnyEvent::HTTPD::Request",
+      @_
+   );
 
    $self->reg_cb (
       connect => sub {
@@ -135,8 +161,7 @@ sub new {
                $url = URI->new ($url);
 
                if ($meth eq 'GET') {
-                  $cont =
-                     AnyEvent::HTTPD::HTTPConnection::_parse_urlencoded ($url->query);
+                  $cont = parse_urlencoded ($url->query);
                }
 
                if ($meth eq 'GET' or $meth eq 'POST') {
@@ -153,11 +178,14 @@ sub new {
                }
             }
          );
+
+         $self->event (client_connected => $con->{host}, $con->{port});
       },
       disconnect => sub {
          my ($self, $con) = @_;
          $con->unreg_cb (delete $self->{conns}->{$con});
-      }
+         $self->event (client_disconnected => $con->{host}, $con->{port});
+      },
    );
 
    $self->{state} ||= {};
@@ -169,7 +197,7 @@ sub handle_app_req {
    my ($self, $meth, $url, $hdr, $cont, $host, $port, $respcb) = @_;
 
    my $req =
-      AnyEvent::HTTPD::Request->new (
+      $self->{request_class}->new (
          httpd   => $self,
          method  => $meth,
          url     => $url,
@@ -296,8 +324,27 @@ itself.  The second argument (C<$req>) is the L<AnyEvent::HTTPD::Request>
 object for this request. It can be used to get the (possible) form parameters
 for this request or the transmitted content and respond to the request.
 
-Also every request also emits the C<request> event, with the same arguments and
-semantics, you can use this to implement your own request multiplexing.
+
+Along with the above mentioned events these events are also provided:
+
+=over 4
+
+=item request => $req
+
+Every request also emits the C<request> event, with the same arguments and
+semantics as the above mentioned path request events.  You can use this to
+implement your own request multiplexing. You can use C<stop_request> to stop
+any further processing of the request as the C<request> event is the first
+thing that is executed for an incoming request.
+
+=item client_connected => $host, $port
+
+=item client_disconnected => $host, $port
+
+These events are emitted whenever a client coming from C<$host:$port> connects
+to your server or is disconnected from it.
+
+=back
 
 =head1 CACHING
 
@@ -310,6 +357,19 @@ better: a patch :)
 =head1 AUTHOR
 
 Robin Redeker, C<< <elmex at ta-sa.org> >>
+
+=head1 ACKNOWLEDGEMENTS
+
+People who contributed to this module:
+
+=over 4
+
+=item * Mons Anderson
+
+Optimizing the regexes in L<AnyEvent::HTTPD::HTTPConnection> and adding
+the C<backlog> option to L<AnyEvent::HTTPD>.
+
+=back
 
 =head1 BUGS
 

@@ -3,7 +3,7 @@ NAME
     server
 
 VERSION
-    Version 0.83
+    Version 0.84
 
 SYNOPSIS
         use AnyEvent::HTTPD;
@@ -86,6 +86,27 @@ METHODS
             This will set the request timeout for connections. The default
             value is 60 seconds.
 
+        backlog => $int
+            The backlog argument defines the maximum length the queue of
+            pending connections may grow to. The real maximum queue length
+            will be 1.5 times more than the value specified in the backlog
+            argument.
+
+            See also "man 2 listen".
+
+            By default will be set by AnyEvent::Socket"::tcp_server" to 128.
+
+        connection_class => $class
+            This is a special parameter that you can use to pass your own
+            connection class to AnyEvent::HTTPD::HTTPServer. This is only of
+            interest to you if you plan to subclass
+            AnyEvent::HTTPD::HTTPConnection.
+
+        request_class => $class
+            This is a special parameter that you can use to pass your own
+            request class to AnyEvent::HTTPD. This is only of interest to
+            you if you plan to subclass AnyEvent::HTTPD::Request.
+
     port
         Returns the port number this server is bound to.
 
@@ -158,9 +179,20 @@ EVENTS
     the (possible) form parameters for this request or the transmitted
     content and respond to the request.
 
-    Also every request also emits the "request" event, with the same
-    arguments and semantics, you can use this to implement your own request
-    multiplexing.
+    Along with the above mentioned events these events are also provided:
+
+    request => $req
+        Every request also emits the "request" event, with the same
+        arguments and semantics as the above mentioned path request events.
+        You can use this to implement your own request multiplexing. You can
+        use "stop_request" to stop any further processing of the request as
+        the "request" event is the first thing that is executed for an
+        incoming request.
+
+    client_connected => $host, $port
+    client_disconnected => $host, $port
+        These events are emitted whenever a client coming from "$host:$port"
+        connects to your server or is disconnected from it.
 
 CACHING
     Any response from the HTTP server will have "Cache-Control" set to
@@ -172,6 +204,14 @@ CACHING
 
 AUTHOR
     Robin Redeker, "<elmex at ta-sa.org>"
+
+ACKNOWLEDGEMENTS
+    People who contributed to this module:
+
+    *   Mons Anderson
+
+        Optimizing the regexes in AnyEvent::HTTPD::HTTPConnection and adding
+        the "backlog" option to AnyEvent::HTTPD.
 
 BUGS
     Please report any bugs or feature requests to "bug-bs-httpd at

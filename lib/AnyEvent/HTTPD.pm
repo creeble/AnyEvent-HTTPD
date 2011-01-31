@@ -13,11 +13,11 @@ AnyEvent::HTTPD - A simple lightweight event based web (application) server
 
 =head1 VERSION
 
-Version 0.84
+Version 0.90
 
 =cut
 
-our $VERSION = '0.84';
+our $VERSION = '0.90';
 
 =head1 SYNOPSIS
 
@@ -135,6 +135,13 @@ This is a special parameter that you can use to pass your own request class
 to L<AnyEvent::HTTPD>.  This is only of interest to you if you plan
 to subclass L<AnyEvent::HTTPD::Request>.
 
+=item allowed_methods => $arrayref
+
+This parameter sets the allowed HTTP methods for requests, defaulting to GET,
+HEAD and POST.  Each request received is matched against this list, and a
+'501 not implemented' is returned if no match is found.  Requests using
+disallowed handlers will never trigger callbacks.
+
 =back
 
 =cut
@@ -163,8 +170,7 @@ sub new {
                if ($meth eq 'GET') {
                   $cont = parse_urlencoded ($url->query);
                }
-
-               if ($meth eq 'GET' or $meth eq 'POST') {
+               if ( scalar grep { $meth eq $_ } @{ $self->{allowed_methods} } ) {
 
                   weaken $con;
 
@@ -234,6 +240,11 @@ Returns the port number this server is bound to.
 =item B<host>
 
 Returns the host/ip this server is bound to.
+
+=item B<allowed_methods>
+
+Returns an arrayref of allowed HTTP methods, possibly as set by the
+allowed_methods argument to the constructor.
 
 =item B<stop_request>
 
@@ -337,6 +348,25 @@ implement your own request multiplexing. You can use C<stop_request> to stop
 any further processing of the request as the C<request> event is the first
 thing that is executed for an incoming request.
 
+An example of one of many possible uses:
+
+   $httpd->reg_cb (
+      request => sub {
+         my ($httpd, $req) = @_;
+
+         my $url = $req->url;
+
+         if ($url->path =~ /\/images\/img_(\d+).jpg$/) {
+            handle_image_request ($req, $1); # your task :)
+
+            # stop the request from emitting further events
+            # so that the '/images/img_001.jpg' and the
+            # '/images' and '' events are NOT emitted:
+            $httpd->stop_request;
+         }
+      }
+   );
+
 =item client_connected => $host, $port
 
 =item client_disconnected => $host, $port
@@ -351,8 +381,10 @@ to your server or is disconnected from it.
 Any response from the HTTP server will have C<Cache-Control> set to C<max-age=0> and
 also the C<Expires> header set to the C<Date> header. Meaning: Caching is disabled.
 
-If you need caching or would like to have it you can send me a mail or even
-better: a patch :)
+You can of course set those headers yourself in the response, but keep in mind
+that the default for those headers are like mentioned above.
+
+If you need more support here you can send me a mail or even better: a patch :)
 
 =head1 AUTHOR
 
@@ -414,8 +446,10 @@ L<http://search.cpan.org/dist/AnyEvent-HTTPD>
 
 =head1 ACKNOWLEDGEMENTS
 
-   Andrey Smirnov - for keep-alive patches.
-   Pedro Melo     - for valuable input in general and patches.
+   Andrey Smirnov   - for keep-alive patches.
+   Pedro Melo       - for valuable input in general and patches.
+   Nicholas Harteau - patch for ';' pair separator support,
+                      patch for allowed_methods support
 
 =head1 COPYRIGHT & LICENSE
 

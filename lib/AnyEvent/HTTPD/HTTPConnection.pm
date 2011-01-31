@@ -66,8 +66,12 @@ sub error {
 sub response_done {
    my ($self) = @_;
 
-   $self->{hdl}->on_drain; # clear any drain handlers
    (delete $self->{transfer_cb})->() if $self->{transfer_cb};
+
+   # sometimes a response might be written after connection is already dead:
+   return unless $self->{hdl};
+
+   $self->{hdl}->on_drain; # clear any drain handlers
 
    if ($self->{keep_alive}) {
       $self->push_header_line;
@@ -103,11 +107,13 @@ sub response {
 
    my $res = "HTTP/1.0 $code $msg\015\012";
    $hdr->{'Expires'}        = $hdr->{'Date'}
-                            = _time_to_http_date time;
-   $hdr->{'Cache-Control'}  = "max-age=0";
+                            = _time_to_http_date time
+       unless defined $hdr->{'Expires'};
+   $hdr->{'Cache-Control'}  = "max-age=0"
+       unless defined $hdr->{'Cache-Control'};
    $hdr->{'Connection'}     = $self->{keep_alive} ? 'Keep-Alive' : 'close';
 
-   $hdr->{'Content-Length'} = length $content
+   $hdr->{'Content-Length'} = length "$content"
       if not (defined $hdr->{'Content-Length'}) && not ref $content;
 
    unless (defined $hdr->{'Content-Length'}) {
@@ -240,7 +246,7 @@ sub decode_multipart {
    return $parts;
 }
 
-# application/x-www-form-urlencoded  
+# application/x-www-form-urlencoded
 #
 # This is the default content type. Forms submitted with this content type must
 # be encoded as follows:
@@ -361,9 +367,9 @@ sub push_header_line {
       if ($line =~ /(\S+) \040 (\S+) \040 HTTP\/(\d+)\.(\d+)/xso) {
          my ($meth, $url, $vm, $vi) = ($1, $2, $3, $4);
 
-         if (not grep { $meth eq $_ } qw/GET HEAD POST/) {
+         if (not grep { $meth eq $_ } @{ $self->{allowed_methods} }) {
             $self->error (501, "not implemented",
-                          { Allow => "GET,HEAD,POST" });
+                          { Allow => join(",", @{ $self->{allowed_methods} })});
             return;
          }
 

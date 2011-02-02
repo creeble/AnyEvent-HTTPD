@@ -56,7 +56,7 @@ sub error {
    my ($self, $code, $msg, $hdr, $content) = @_;
 
    if ($code !~ /^(1\d\d|204|304)$/o) {
-      unless (defined $content) { $content = "$code $msg" }
+      unless (defined $content) { $content = "$code $msg\n" }
       $hdr->{'Content-Type'} = 'text/plain';
    }
 
@@ -102,12 +102,13 @@ sub _time_to_http_date
 
 
 sub response {
-   my ($self, $code, $msg, $hdr, $content) = @_;
+   my ($self, $code, $msg, $hdr, $content, $no_body) = @_;
    return unless $self->{hdl};
 
    my $res = "HTTP/1.0 $code $msg\015\012";
-   $hdr->{'Expires'}        = $hdr->{'Date'}
-                            = _time_to_http_date time
+   $hdr->{'Date'} = _time_to_http_date time
+      unless defined $hdr->{'Date'};
+   $hdr->{'Expires'} = $hdr->{'Date'}
        unless defined $hdr->{'Expires'};
    $hdr->{'Cache-Control'}  = "max-age=0"
        unless defined $hdr->{'Cache-Control'};
@@ -126,6 +127,12 @@ sub response {
    }
 
    $res .= "\015\012";
+
+   if ($no_body) { # for HEAD requests!
+      $self->{hdl}->push_write ($res);
+      $self->response_done;
+      return;
+   }
 
    if (ref ($content) eq 'CODE') {
       weaken $self;
@@ -399,7 +406,14 @@ sub do_disconnect {
    delete $self->{transfer_cb};
    delete $self->{req_timeout};
    $self->event ('disconnect', $err);
-   delete $self->{hdl};
+   shutdown $self->{hdl}->{fh}, 1;
+   $self->{hdl}->on_read (sub { });
+   $self->{hdl}->on_eof (undef);
+   my $timer;
+   $timer = AE::timer 2, 0, sub {
+      undef $timer;
+      delete $self->{hdl};
+   };
 }
 
 1;

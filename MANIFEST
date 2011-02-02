@@ -27,5 +27,6 @@ t/08_options_request.t
 t/09_options_star.t
 t/10_allowed_methods.t
 t/11_denied_methods.t
+t/12_head_no_body.t
 META.yml                                 Module meta-data (added by MakeMaker)
 META.json                                Module meta-data (added by MakeMaker)

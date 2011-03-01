@@ -3,7 +3,7 @@ NAME
     server
 
 VERSION
-    Version 0.91
+    Version 0.92
 
 SYNOPSIS
         use AnyEvent::HTTPD;
@@ -59,6 +59,8 @@ FEATURES
 
     *   with version 0.8 no more dependend on LWP for HTTP::Date.
 
+    *   (limited) support for SSL
+
 METHODS
     The AnyEvent::HTTPD class inherits directly from
     AnyEvent::HTTPD::HTTPServer which inherits the event callback interface
@@ -81,6 +83,28 @@ METHODS
         port => $port
             The TCP port the HTTP server will listen on. If undefined some
             free port will be used. You can get it via the "port" method.
+
+        ssl => $tls_ctx
+            If this option is given the server will listen for a SSL/TLS
+            connection on the configured port. As $tls_ctx you can pass
+            anything that you can pass as "tls_ctx" to an AnyEvent::Handle
+            object.
+
+            Example:
+
+               my $httpd =
+                  AnyEvent::HTTPD->new (
+                     port => 443,
+                     ssl  => { cert_file => "/path/to/my/server_cert_and_key.pem" }
+                  );
+
+            Or:
+
+               my $httpd =
+                  AnyEvent::HTTPD->new (
+                     port => 443,
+                     ssl  => AnyEvent::TLS->new (...),
+                  );
 
         request_timeout => $seconds
             This will set the request timeout for connections. The default

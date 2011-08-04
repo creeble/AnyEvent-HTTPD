@@ -1,5 +1,16 @@
 Revision history for AnyEvent-HTTPD
 
+0.93    Thu Aug  4 10:38:09 CEST 2011
+        - made it possible to remove default headers
+          completely, thanks go to Chris Kastorff for providing a patch.
+        - applied also a fix for case handling of the headers,
+          thanks go to the patch from Chris Kastorff.
+        - fixed some tests. I hate it when all bugs that
+          are found via CPAN Testers are bugs in the tests.
+        - fixed that the URL returned by Request::url method will
+          now also contain the query string (thanks to art sackett for
+          spotting this).
+
 0.92    Tue Mar  1 11:46:14 CET 2011
         - added simple SSL/TLS support.
         - removed from tests from the distribution.

@@ -33,7 +33,6 @@ sub url {
    my ($self) = @_;
    my $url = $self->{url};
    my $u = URI->new ($url);
-   $u->query (undef);
    $u
 }
 
@@ -49,6 +48,18 @@ Then the array reference has these elements:
 
    my ($code, $message, $header_hash, $content) =
          [200, 'ok', { 'Content-Type' => 'text/html' }, '<h1>Test</h1>' }]
+
+You can remove most headers added by default (like C<Cache-Control>,
+C<Expires>, and C<Content-Length>) by setting them to undef, like so:
+
+   $req->respond([
+      200, 'OK', {
+        'Content-Type'  => 'text/html',
+        'Cache-Control' => 'max-age=3600',
+        'Expires'       => undef,
+      },
+      'This data will be cached for one hour.'
+   ]);
 
 =item * a hash reference
 
@@ -261,7 +272,7 @@ sub client_port { $_[0]->{port} }
 
 =head1 COPYRIGHT & LICENSE
 
-Copyright 2008-2009 Robin Redeker, all rights reserved.
+Copyright 2008-2011 Robin Redeker, all rights reserved.
 
 This program is free software; you can redistribute it and/or modify it
 under the same terms as Perl itself.

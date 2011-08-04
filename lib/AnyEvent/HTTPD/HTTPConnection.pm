@@ -24,7 +24,7 @@ It has no public interface yet.
 
 =head1 COPYRIGHT & LICENSE
 
-Copyright 2008-2009 Robin Redeker, all rights reserved.
+Copyright 2008-2011 Robin Redeker, all rights reserved.
 
 This program is free software; you can redistribute it and/or modify it
 under the same terms as Perl itself.
@@ -72,7 +72,7 @@ sub response_done {
    (delete $self->{transfer_cb})->() if $self->{transfer_cb};
 
    # sometimes a response might be written after connection is already dead:
-   return unless $self->{hdl};
+   return unless defined ($self->{hdl}) && !$self->{disconnected};
 
    $self->{hdl}->on_drain; # clear any drain handlers
 
@@ -106,26 +106,31 @@ sub _time_to_http_date
 
 sub response {
    my ($self, $code, $msg, $hdr, $content, $no_body) = @_;
+   return if $self->{disconnected};
    return unless $self->{hdl};
 
    my $res = "HTTP/1.0 $code $msg\015\012";
-   $hdr->{'Date'} = _time_to_http_date time
-      unless defined $hdr->{'Date'};
-   $hdr->{'Expires'} = $hdr->{'Date'}
-       unless defined $hdr->{'Expires'};
-   $hdr->{'Cache-Control'}  = "max-age=0"
-       unless defined $hdr->{'Cache-Control'};
-   $hdr->{'Connection'}     = $self->{keep_alive} ? 'Keep-Alive' : 'close';
+   header_set ($hdr, 'Date' => _time_to_http_date time)
+      unless header_exists ($hdr, 'Date');
+   header_set ($hdr, 'Expires' => header_get ($hdr, 'Date'))
+      unless header_exists ($hdr, 'Expires');
+   header_set ($hdr, 'Cache-Control' => "max-age=0")
+      unless header_exists ($hdr, 'Cache-Control');
+   header_set ($hdr, 'Connection' =>
+                    ($self->{keep_alive} ? 'Keep-Alive' : 'close'));
 
-   $hdr->{'Content-Length'} = length "$content"
-      if not (defined $hdr->{'Content-Length'}) && not ref $content;
+   header_set ($hdr, 'Content-Length' => length "$content")
+      unless header_exists ($hdr, 'Content-Length')
+             || ref $content;
 
-   unless (defined $hdr->{'Content-Length'}) {
+   unless (defined header_get ($hdr, 'Content-Length')) {
       # keep alive with no content length will NOT work.
       delete $self->{keep_alive};
+      header_set ($hdr, 'Connection' => 'close');
    }
 
    while (my ($h, $v) = each %$hdr) {
+      next unless defined $v;
       $res .= "$h: $v\015\012";
    }
 
@@ -143,7 +148,7 @@ sub response {
       my $chunk_cb = sub {
          my ($chunk) = @_;
 
-         return 0 unless defined ($self) && defined ($self->{hdl});
+         return 0 unless defined ($self) && defined ($self->{hdl}) && !$self->{disconnected};
 
          delete $self->{transport_polled};
 
@@ -359,6 +364,8 @@ sub push_header {
 sub push_header_line {
    my ($self) = @_;
 
+   return if $self->{disconnected};
+
    weaken $self;
 
    $self->{req_timeout} =
@@ -405,6 +412,9 @@ sub push_header_line {
 sub do_disconnect {
    my ($self, $err) = @_;
 
+   return if $self->{disconnected};
+
+   $self->{disconnected} = 1;
    $self->{transfer_cb}->() if $self->{transfer_cb};
    delete $self->{transfer_cb};
    delete $self->{req_timeout};

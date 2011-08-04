@@ -13,11 +13,11 @@ AnyEvent::HTTPD - A simple lightweight event based web (application) server
 
 =head1 VERSION
 
-Version 0.92
+Version 0.93
 
 =cut
 
-our $VERSION = '0.92';
+our $VERSION = '0.93';
 
 =head1 SYNOPSIS
 
@@ -194,6 +194,7 @@ sub new {
                if ($meth eq 'GET') {
                   $cont = parse_urlencoded ($url->query);
                }
+
                if ( scalar grep { $meth eq $_ } @{ $self->{allowed_methods} } ) {
 
                   weaken $con;
@@ -405,27 +406,15 @@ to your server or is disconnected from it.
 Any response from the HTTP server will have C<Cache-Control> set to C<max-age=0> and
 also the C<Expires> header set to the C<Date> header. Meaning: Caching is disabled.
 
-You can of course set those headers yourself in the response, but keep in mind
-that the default for those headers are like mentioned above.
+You can of course set those headers yourself in the response, or remove them by
+setting them to undef, but keep in mind that the default for those headers are
+like mentioned above.
 
 If you need more support here you can send me a mail or even better: a patch :)
 
 =head1 AUTHOR
 
 Robin Redeker, C<< <elmex at ta-sa.org> >>
-
-=head1 ACKNOWLEDGEMENTS
-
-People who contributed to this module:
-
-=over 4
-
-=item * Mons Anderson
-
-Optimizing the regexes in L<AnyEvent::HTTPD::HTTPConnection> and adding
-the C<backlog> option to L<AnyEvent::HTTPD>.
-
-=back
 
 =head1 BUGS
 
@@ -474,10 +463,14 @@ L<http://search.cpan.org/dist/AnyEvent-HTTPD>
    Pedro Melo       - for valuable input in general and patches.
    Nicholas Harteau - patch for ';' pair separator support,
                       patch for allowed_methods support
+   Chris Kastorff   - patch for making default headers removable
+                      and more fault tolerant w.r.t. case.
+   Mons Anderson    - Optimizing the regexes in L<AnyEvent::HTTPD::HTTPConnection>
+                      and adding the C<backlog> option to L<AnyEvent::HTTPD>.
 
 =head1 COPYRIGHT & LICENSE
 
-Copyright 2008-2009 Robin Redeker, all rights reserved.
+Copyright 2008-2011 Robin Redeker, all rights reserved.
 
 This program is free software; you can redistribute it and/or modify it
 under the same terms as Perl itself.
